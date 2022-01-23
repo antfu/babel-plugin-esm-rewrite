@@ -1,11 +1,10 @@
 import { declare } from '@babel/helper-plugin-utils'
 import type { Node, NodePath } from '@babel/traverse'
-import type t from '@babel/types'
 
 export const ssrModuleExportsKey = '__esm_exports__'
 export const ssrImportKey = '__esm_import__'
 export const ssrDynamicImportKey = '__esm_dynamic_import__'
-export const ssrExportAllKey = '__esm_exportAll__'
+export const ssrExportAllKey = '__esm_export_all__'
 export const ssrImportMetaKey = '__esm_import_meta__'
 export const ssrImportItemPrefix = '__esm_import_'
 
@@ -109,12 +108,14 @@ export default declare((api) => {
           if (node.declaration) {
             const decl = node.declaration
             replaces.push(decl)
+            // export const a = 1, b = 2;
             if (decl.type === 'VariableDeclaration') {
               for (const declarator of decl.declarations) {
                 if (declarator.id.type === 'Identifier')
                   replaces.push(createExport(declarator.id.name))
               }
             }
+            // export function a () {}
             else if (decl.type === 'ClassDeclaration' || decl.type === 'FunctionDeclaration') {
               if (decl.id) {
                 const name = decl.id.name
@@ -125,11 +126,13 @@ export default declare((api) => {
           else if (node.specifiers) {
             const source = node.source
             let importId: string | undefined
+            // export { foo } from 'foo'
             if (source) {
               importId = getImportId(file)
               replaces.push(createImport(importId, source.value))
             }
             for (const spec of node.specifiers) {
+              // export { foo }
               if (spec.type === 'ExportSpecifier') {
                 if (spec.exported.type === 'Identifier') {
                   let local = spec.local.name
@@ -141,17 +144,70 @@ export default declare((api) => {
                   replaces.push(createExport(exported, local))
                 }
               }
+              // export * as foo from 'foo'
+              else if (spec.type === 'ExportNamespaceSpecifier') {
+                const local = spec.exported.name
+                replaces.push(createExport(local, importId))
+              }
             }
           }
+        }
+        // export * from 'foo'
+        else if (node.type === 'ExportAllDeclaration') {
+          const source = node.source
+          if (source) {
+            const importId = getImportId(file)
+            replaces.push(createImport(importId, source.value))
+            replaces.push(t.callExpression(
+              t.identifier(ssrExportAllKey),
+              [t.identifier(importId)],
+            ))
+          }
+        }
+        // export default foo
+        else if (node.type === 'ExportDefaultDeclaration') {
+          replaces.push(t.assignmentExpression(
+            '=',
+            t.memberExpression(
+              t.identifier(ssrModuleExportsKey),
+              t.identifier('default'),
+            ),
+            node.declaration as any,
+          ))
         }
 
         path.replaceWithMultiple(replaces)
         path.skip()
       },
+      // dynamic import
+      Import(path) {
+        path.parentPath.replaceWith(
+          t.callExpression(
+            t.identifier(ssrImportKey),
+            (path.parent as any).arguments,
+          ),
+        )
+      },
+      // import.meta
+      MetaProperty(path) {
+        path.replaceWith(t.identifier(ssrImportMetaKey))
+        path.skip()
+      },
       Identifier(path, file) {
+        // as a member expression
+        if (path.parent.type === 'MemberExpression' && path.parent.computed === false && path.parent.object !== path.node)
+          return
+        // as a class member
+        if (path.parent.type === 'ClassMethod' || path.parent.type === 'ClassProperty')
+          return
+        // declarations
+        if (['FunctionDeclaration', 'FunctionExpression', 'VariableDeclaration', 'VariableDeclarator', 'ClassDeclaration'].includes(path.parent.type))
+          return
         const id = _getId(path.node.name, path, file)
-        if (id !== path.node.name)
+        if (id !== path.node.name) {
           path.replaceWith(t.identifier(id))
+          path.skip()
+        }
       },
     },
   }
