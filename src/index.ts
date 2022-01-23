@@ -1,15 +1,26 @@
 import { declare } from '@babel/helper-plugin-utils'
 import type { Node, NodePath } from '@babel/traverse'
 
-export const ssrModuleExportsKey = '__esm_exports__'
-export const ssrImportKey = '__esm_import__'
-export const ssrDynamicImportKey = '__esm_dynamic_import__'
-export const ssrExportAllKey = '__esm_export_all__'
-export const ssrImportMetaKey = '__esm_import_meta__'
-export const ssrImportItemPrefix = '__esm_import_'
+export interface Options {
+  keyModuleExport?: string
+  keyImport?: string
+  keyDynamicImport?: string
+  keyExportAll?: string
+  keyImportMeta?: string
+  keyImportBindingPrefix?: string
+}
 
-export default declare((api) => {
+export default declare((api, options = {}) => {
   const t = api.types
+
+  const {
+    keyModuleExport = '__esm_exports__',
+    keyImport = '__esm_import__',
+    keyDynamicImport = '__esm_dynamic_import__',
+    keyExportAll = '__esm_export_all__',
+    keyImportMeta = '__esm_import_meta__',
+    keyImportBindingPrefix = '__esm_import_',
+  } = options
 
   const map = new WeakMap<any, {
     uid: number
@@ -17,7 +28,7 @@ export default declare((api) => {
   }>()
 
   function setIdMap(file: any, name: string, value: string) {
-    if (name.startsWith(ssrImportItemPrefix))
+    if (name.startsWith(keyImportBindingPrefix))
       return
     if (!map.has(file))
       map.set(file, { uid: 0, id: new Map() })
@@ -35,12 +46,12 @@ export default declare((api) => {
   }
 
   function getImportId(file: any) {
-    return `${ssrImportItemPrefix}${getUid(file)}__`
+    return `${keyImportBindingPrefix}${getUid(file)}__`
   }
 
   function createExport(name: string, local = name) {
     return api.parse(
-      `Object.defineProperty(${ssrModuleExportsKey},"${name}",{ enumerable: true, configurable: true, get(){ return ${local} }});`,
+      `Object.defineProperty(${keyModuleExport},"${name}",{ enumerable: true, configurable: true, get(){ return ${local} }});`,
     )
   }
   function createImport(id: string, source: string) {
@@ -51,7 +62,7 @@ export default declare((api) => {
           t.identifier(id),
           t.awaitExpression(
             t.callExpression(
-              t.identifier(ssrImportKey),
+              t.identifier(keyImport),
               [t.stringLiteral(source)],
             ),
           ),
@@ -60,11 +71,16 @@ export default declare((api) => {
     )
   }
 
-  function _getId(name: string, path: NodePath<Node>, file: any) {
+  function _resolveId(name: string, path: NodePath<Node>, file: any) {
     if (!getIdMap(file, name))
       return name
 
-    const binding = path.scope.bindings[name]
+    let currentPath = path
+    let binding = currentPath.scope.getBinding(name)
+    while (!binding && currentPath.parentPath) {
+      currentPath = currentPath.parentPath
+      binding = currentPath.scope.getBinding(name)
+    }
     if (!binding || binding.kind === 'module')
       return getIdMap(file, name) || name
     return name
@@ -102,7 +118,7 @@ export default declare((api) => {
         const replaces: any[] = []
         const node = path.node
 
-        const getId = (id: string) => _getId(id, path, file)
+        const resolveId = (id: string) => _resolveId(id, path, file)
 
         if (node.type === 'ExportNamedDeclaration') {
           if (node.declaration) {
@@ -140,7 +156,7 @@ export default declare((api) => {
                   if (source)
                     local = `${importId}.${local}`
                   else
-                    local = getId(local)
+                    local = resolveId(local)
                   replaces.push(createExport(exported, local))
                 }
               }
@@ -159,21 +175,35 @@ export default declare((api) => {
             const importId = getImportId(file)
             replaces.push(createImport(importId, source.value))
             replaces.push(t.callExpression(
-              t.identifier(ssrExportAllKey),
+              t.identifier(keyExportAll),
               [t.identifier(importId)],
             ))
           }
         }
         // export default foo
         else if (node.type === 'ExportDefaultDeclaration') {
-          replaces.push(t.assignmentExpression(
-            '=',
-            t.memberExpression(
-              t.identifier(ssrModuleExportsKey),
-              t.identifier('default'),
-            ),
-            node.declaration as any,
-          ))
+          // named function
+          if ((node.declaration.type === 'FunctionDeclaration' || node.declaration.type === 'ClassDeclaration') && node.declaration.id) {
+            replaces.push(node.declaration)
+            replaces.push(createExport('default', node.declaration.id.name))
+          }
+          // other literals
+          else {
+            let decl = node.declaration
+            if (decl.type === 'FunctionDeclaration')
+              decl = t.functionExpression(decl.id, decl.params, decl.body, decl.generator, decl.async)
+            if (decl.type === 'ClassDeclaration')
+              decl = t.classExpression(decl.id, decl.superClass, decl.body)
+
+            replaces.push(t.assignmentExpression(
+              '=',
+              t.memberExpression(
+                t.identifier(keyModuleExport),
+                t.identifier('default'),
+              ),
+              decl as any,
+            ))
+          }
         }
 
         path.replaceWithMultiple(replaces)
@@ -183,14 +213,14 @@ export default declare((api) => {
       Import(path) {
         path.parentPath.replaceWith(
           t.callExpression(
-            t.identifier(ssrImportKey),
+            t.identifier(keyDynamicImport),
             (path.parent as any).arguments,
           ),
         )
       },
       // import.meta
       MetaProperty(path) {
-        path.replaceWith(t.identifier(ssrImportMetaKey))
+        path.replaceWith(t.identifier(keyImportMeta))
         path.skip()
       },
       Identifier(path, file) {
@@ -201,13 +231,25 @@ export default declare((api) => {
         if (path.parent.type === 'ClassMethod' || path.parent.type === 'ClassProperty')
           return
         // declarations
-        if (['FunctionDeclaration', 'FunctionExpression', 'VariableDeclaration', 'VariableDeclarator', 'ClassDeclaration'].includes(path.parent.type))
+        if (['FunctionDeclaration', 'FunctionExpression', 'VariableDeclaration', 'VariableDeclarator'].includes(path.parent.type))
           return
-        const id = _getId(path.node.name, path, file)
-        if (id !== path.node.name) {
-          path.replaceWith(t.identifier(id))
-          path.skip()
+
+        const id = _resolveId(path.node.name, path, file)
+        if (id === path.node.name)
+          return
+
+        // import Foo from 'foo'
+        // class A extends Foo {}
+        if (path.parent.type === 'ClassDeclaration' && path.parent.superClass === path.node) {
+          path.parentPath.replaceWithMultiple([
+            t.variableDeclaration('const', [t.variableDeclarator(path.node, t.identifier(id))]),
+            path.parent,
+          ])
         }
+        else {
+          path.replaceWith(t.identifier(id))
+        }
+        path.skip()
       },
     },
   }

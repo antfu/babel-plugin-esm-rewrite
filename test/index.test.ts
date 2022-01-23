@@ -172,7 +172,7 @@ test('import.meta', async() => {
 test('dynamic import', async() => {
   const code = await transform('export const i = () => import(\'./foo\')')
   expect(code).toMatchInlineSnapshot(`
-    "const i = () => __esm_import__('./foo');
+    "const i = () => __esm_dynamic_import__('./foo');
     Object.defineProperty(__esm_exports__, \\"i\\", {
       enumerable: true,
       configurable: true,
@@ -290,264 +290,306 @@ test('do not rewrite catch clause', async() => {
   `)
 })
 
-// // #2221
-// test.only('should declare variable for imported super class', async() => {
-//   expect(await transform('import { Foo } from \'./dependency\';' + 'class A extends Foo {}')).toMatchInlineSnapshot(`
-//     "const __vite_ssr_import_0__ = await __vite_ssr_import__(\\"./dependency\\");
-//     const Foo = __vite_ssr_import_0__.Foo;
-//     class A extends Foo {}"
-//   `)
+// #2221
+test('should declare variable for imported super class', async() => {
+  expect(await transform('import { Foo } from \'./dependency\';' + 'class A extends Foo {}')).toMatchInlineSnapshot(`
+    "const __esm_import_0__ = await __esm_import__(\\"./dependency\\");
+    const Foo = __esm_import_0__.Foo;
+    class A extends Foo {}"
+  `)
 
-//   // exported classes: should prepend the declaration at root level, before the
-//   // first class that uses the binding
-//   expect(await transform('import { Foo } from \'./dependency\';' + 'export default class A extends Foo {}\n' + 'export class B extends Foo {}')).toMatchInlineSnapshot(`
-//     "const __vite_ssr_import_0__ = await __vite_ssr_import__(\\"./dependency\\");
-//     const Foo = __vite_ssr_import_0__.Foo;
-//     class A extends Foo {}
-//     class B extends Foo {}
-//     Object.defineProperty(__vite_ssr_exports__, \\"default\\", { enumerable: true, value: A });
-//     Object.defineProperty(__vite_ssr_exports__, \\"B\\", { enumerable: true, configurable: true, get(){ return B }});"
-//   `)
-// })
+  // exported classes: should prepend the declaration at root level, before the
+  // first class that uses the binding
+  expect(await transform('import { Foo } from \'./dependency\';' + 'export default class A extends Foo {}\n' + 'export class B extends Foo {}')).toMatchInlineSnapshot(`
+    "const __esm_import_0__ = await __esm_import__(\\"./dependency\\");
+    const Foo = __esm_import_0__.Foo;
+    class A extends Foo {}
+    Object.defineProperty(__esm_exports__, \\"default\\", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        return A;
+      }
+    });
+    const Foo = __esm_import_0__.Foo;
+    class B extends Foo {}
+    Object.defineProperty(__esm_exports__, \\"B\\", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        return B;
+      }
+    });"
+  `)
+})
 
-// // #4049
-// test('should handle default export variants', async() => {
-//   // default anonymous functions
-//   expect(await transform('export default function() {}\n')).toMatchInlineSnapshot(`
-//     "__vite_ssr_exports__.default = function() {}
-//     "
-//   `)
-//   // default anonymous class
-//   expect(await transform('export default class {}\n')).toMatchInlineSnapshot(`
-//     "__vite_ssr_exports__.default = class {}
-//     "
-//   `)
-//   // default named functions
-//   expect(await transform('export default function foo() {}\n' + 'foo.prototype = Object.prototype;')).toMatchInlineSnapshot(`
-//     "function foo() {}
-//     foo.prototype = Object.prototype;
-//     Object.defineProperty(__vite_ssr_exports__, \\"default\\", { enumerable: true, value: foo });"
-//   `)
-//   // default named classes
-//   expect(await transform('export default class A {}\n' + 'export class B extends A {}')).toMatchInlineSnapshot(`
-//     "class A {}
-//     class B extends A {}
-//     Object.defineProperty(__vite_ssr_exports__, \\"default\\", { enumerable: true, value: A });
-//     Object.defineProperty(__vite_ssr_exports__, \\"B\\", { enumerable: true, configurable: true, get(){ return B }});"
-//   `)
-// })
+// #4049
+test('should handle default export variants', async() => {
+  // default anonymous functions
+  expect(await transform('export default function() {}\n')).toMatchInlineSnapshot('"__esm_exports__.default = function () {}"')
+  // default anonymous class
+  expect(await transform('export default class {}\n')).toMatchInlineSnapshot('"__esm_exports__.default = class {}"')
+  // default named functions
+  expect(await transform('export default function foo() {}\n' + 'foo.prototype = Object.prototype;')).toMatchInlineSnapshot(`
+    "function foo() {}
+    Object.defineProperty(__esm_exports__, \\"default\\", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        return foo;
+      }
+    });
+    foo.prototype = Object.prototype;"
+  `)
+  // default named classes
+  expect(await transform('export default class A {}\n' + 'export class B extends A {}')).toMatchInlineSnapshot(`
+    "class A {}
+    Object.defineProperty(__esm_exports__, \\"default\\", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        return A;
+      }
+    });
+    class B extends A {}
+    Object.defineProperty(__esm_exports__, \\"B\\", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        return B;
+      }
+    });"
+  `)
+})
 
-// test('overwrite bindings', async() => {
-//   expect(
-//     await transform(
-//       'import { inject } from \'vue\';'
-//         + 'const a = { inject }\n'
-//         + 'const b = { test: inject }\n'
-//         + 'function c() { const { test: inject } = { test: true }; console.log(inject) }\n'
-//         + 'const d = inject \n'
-//         + 'function f() {  console.log(inject) }\n'
-//         + 'function e() { const { inject } = { inject: true } }\n'
-//         + 'function g() { const f = () => { const inject = true }; console.log(inject) }\n',
-//     ),
-//   ).toMatchInlineSnapshot(`
-//     "const __vite_ssr_import_0__ = await __vite_ssr_import__(\\"vue\\");
-//     const a = { inject: __vite_ssr_import_0__.inject }
-//     const b = { test: __vite_ssr_import_0__.inject }
-//     function c() { const { test: inject } = { test: true }; console.log(inject) }
-//     const d = __vite_ssr_import_0__.inject
-//     function f() {  console.log(__vite_ssr_import_0__.inject) }
-//     function e() { const { inject } = { inject: true } }
-//     function g() { const f = () => { const inject = true }; console.log(__vite_ssr_import_0__.inject) }
-//     "
-//   `)
-// })
+test('overwrite bindings', async() => {
+  expect(
+    await transform(
+      'import { inject } from \'vue\';'
+        + 'const a = { inject }\n'
+        + 'const b = { test: inject }\n'
+        + 'function c() { const { test: inject } = { test: true }; console.log(inject) }\n'
+        + 'const d = inject \n'
+        + 'function f() {  console.log(inject) }\n'
+        + 'function e() { const { inject } = { inject: true } }\n'
+        + 'function g() { const f = () => { const inject = true }; console.log(inject) }\n',
+    ),
+  ).toMatchInlineSnapshot(`
+    "const __esm_import_0__ = await __esm_import__(\\"vue\\");
+    const a = {
+      __esm_import_0__.inject
+    };
+    const b = {
+      test: __esm_import_0__.inject
+    };
+    function c() {
+      const {
+        test: inject
+      } = {
+        test: true
+      };
+      console.log(inject);
+    }
+    const d = inject;
+    function f() {
+      console.log(__esm_import_0__.inject);
+    }
+    function e() {
+      const {
+        inject
+      } = {
+        inject: true
+      };
+    }
+    function g() {
+      const f = () => {
+        const inject = true;
+      };
+      console.log(__esm_import_0__.inject);
+    }"
+  `)
+})
 
-// test('Empty array pattern', async() => {
-//   expect(await transform('const [, LHS, RHS] = inMatch;')).toMatchInlineSnapshot('"const [, LHS, RHS] = inMatch;"')
-// })
+test('Empty array pattern', async() => {
+  expect(await transform('const [, LHS, RHS] = inMatch;')).toMatchInlineSnapshot('"const [, LHS, RHS] = inMatch;"')
+})
 
-// test('function argument destructure', async() => {
-//   expect(
-//     await transform(
-//       `
-// import { foo, bar } from 'foo'
-// const a = ({ _ = foo() }) => {}
-// function b({ _ = bar() }) {}
-// function c({ _ = bar() + foo() }) {}
-// `,
-//     ),
-//   ).toMatchInlineSnapshot(`
-//     "
-//     const __vite_ssr_import_0__ = await __vite_ssr_import__(\\"foo\\");
+test('function argument destructure', async() => {
+  expect(
+    await transform(
+      `
+import { foo, bar } from 'foo'
+const a = ({ _ = foo() }) => {}
+function b({ _ = bar() }) {}
+function c({ _ = bar() + foo() }) {}
+`,
+    ),
+  ).toMatchInlineSnapshot(`
+    "const __esm_import_0__ = await __esm_import__(\\"foo\\");
+    const a = ({
+      _ = __esm_import_0__.foo()
+    }) => {};
+    function b({
+      _ = __esm_import_0__.bar()
+    }) {}
+    function c({
+      _ = __esm_import_0__.bar() + __esm_import_0__.foo()
+    }) {}"
+  `)
+})
 
-//     const a = ({ _ = __vite_ssr_import_0__.foo() }) => {}
-//     function b({ _ = __vite_ssr_import_0__.bar() }) {}
-//     function c({ _ = __vite_ssr_import_0__.bar() + __vite_ssr_import_0__.foo() }) {}
-//     "
-//   `)
-// })
+test('object destructure alias', async() => {
+  expect(
+    await transform(
+      `
+import { n } from 'foo'
+const a = () => {
+  const { type: n = 'bar' } = {}
+  console.log(n)
+}
+`,
+    ),
+  ).toMatchInlineSnapshot(`
+    "const __esm_import_0__ = await __esm_import__(\\"foo\\");
+    const a = () => {
+      const {
+        type: n = 'bar'
+      } = {};
+      console.log(n);
+    };"
+  `)
+})
 
-// test('object destructure alias', async() => {
-//   expect(
-//     await transform(
-//       `
-// import { n } from 'foo'
-// const a = () => {
-//   const { type: n = 'bar' } = {}
-//   console.log(n)
-// }
-// `,
-//     ),
-//   ).toMatchInlineSnapshot(`
-//     "
-//     const __vite_ssr_import_0__ = await __vite_ssr_import__(\\"foo\\");
+test('nested object destructure alias', async() => {
+  expect(
+    await transform(
+      `
+import { remove, add, get, set, rest, objRest } from 'vue'
 
-//     const a = () => {
-//       const { type: n = 'bar' } = {}
-//       console.log(n)
-//     }
-//     "
-//   `)
-// })
+function a() {
+  const {
+    o: { remove },
+    a: { b: { c: [ add ] }},
+    d: [{ get }, set, ...rest],
+    ...objRest
+  } = foo
 
-// test('nested object destructure alias', async() => {
-//   expect(
-//     await transform(
-//       `
-// import { remove, add, get, set, rest, objRest } from 'vue'
+  remove()
+  add()
+  get()
+  set()
+  rest()
+  objRest()
+}
 
-// function a() {
-//   const {
-//     o: { remove },
-//     a: { b: { c: [ add ] }},
-//     d: [{ get }, set, ...rest],
-//     ...objRest
-//   } = foo
+remove()
+add()
+get()
+set()
+rest()
+objRest()
+`,
+    ),
+  ).toMatchInlineSnapshot(`
+    "const __esm_import_0__ = await __esm_import__(\\"vue\\");
+    function a() {
+      const {
+        o: {
+          remove
+        },
+        a: {
+          b: {
+            c: [add]
+          }
+        },
+        d: [{
+          get
+        }, set, ...rest],
+        ...objRest
+      } = foo;
+      remove();
+      add();
+      get();
+      set();
+      rest();
+      objRest();
+    }
+    __esm_import_0__.remove();
+    __esm_import_0__.add();
+    __esm_import_0__.get();
+    __esm_import_0__.set();
+    __esm_import_0__.rest();
+    __esm_import_0__.objRest();"
+  `)
+})
 
-//   remove()
-//   add()
-//   get()
-//   set()
-//   rest()
-//   objRest()
-// }
+test('class props', async() => {
+  expect(
+    await transform(
+      `
+import { remove, add } from 'vue'
 
-// remove()
-// add()
-// get()
-// set()
-// rest()
-// objRest()
-// `,
-//     ),
-//   ).toMatchInlineSnapshot(`
-//     "
-//     const __vite_ssr_import_0__ = await __vite_ssr_import__(\\"vue\\");
+class A {
+  remove = 1
+  add = null
+}
+`,
+    ),
+  ).toMatchInlineSnapshot(`
+    "const __esm_import_0__ = await __esm_import__(\\"vue\\");
+    class A {
+      remove = 1;
+      add = null;
+    }"
+  `)
+})
 
-//     function a() {
-//       const {
-//         o: { remove },
-//         a: { b: { c: [ add ] }},
-//         d: [{ get }, set, ...rest],
-//         ...objRest
-//       } = foo
+test('declare scope', async() => {
+  expect(
+    await transform(
+      `
+import { aaa, bbb, ccc, ddd } from 'vue'
 
-//       remove()
-//       add()
-//       get()
-//       set()
-//       rest()
-//       objRest()
-//     }
+function foobar() {
+  ddd()
 
-//     __vite_ssr_import_0__.remove()
-//     __vite_ssr_import_0__.add()
-//     __vite_ssr_import_0__.get()
-//     __vite_ssr_import_0__.set()
-//     __vite_ssr_import_0__.rest()
-//     __vite_ssr_import_0__.objRest()
-//     "
-//   `)
-// })
+  const aaa = () => {
+    bbb(ccc)
+    ddd()
+  }
+  const bbb = () => {
+    console.log('hi')
+  }
+  const ccc = 1
+  function ddd() {}
 
-// test('class props', async() => {
-//   expect(
-//     await transform(
-//       `
-// import { remove, add } from 'vue'
+  aaa()
+  bbb()
+  ccc()
+}
 
-// class A {
-//   remove = 1
-//   add = null
-// }
-// `,
-//     ),
-//   ).toMatchInlineSnapshot(`
-//     "
-//     const __vite_ssr_import_0__ = await __vite_ssr_import__(\\"vue\\");
-
-//     const add = __vite_ssr_import_0__.add;
-//     const remove = __vite_ssr_import_0__.remove;
-//     class A {
-//       remove = 1
-//       add = null
-//     }
-//     "
-//   `)
-// })
-
-// test('declare scope', async() => {
-//   expect(
-//     await transform(
-//       `
-// import { aaa, bbb, ccc, ddd } from 'vue'
-
-// function foobar() {
-//   ddd()
-
-//   const aaa = () => {
-//     bbb(ccc)
-//     ddd()
-//   }
-//   const bbb = () => {
-//     console.log('hi')
-//   }
-//   const ccc = 1
-//   function ddd() {}
-
-//   aaa()
-//   bbb()
-//   ccc()
-// }
-
-// aaa()
-// bbb()
-// `,
-//     ),
-//   ).toMatchInlineSnapshot(`
-//     "
-//     const __vite_ssr_import_0__ = await __vite_ssr_import__(\\"vue\\");
-
-//     function foobar() {
-//       ddd()
-
-//       const aaa = () => {
-//         bbb(ccc)
-//         ddd()
-//       }
-//       const bbb = () => {
-//         console.log('hi')
-//       }
-//       const ccc = 1
-//       function ddd() {}
-
-//       aaa()
-//       bbb()
-//       ccc()
-//     }
-
-//     __vite_ssr_import_0__.aaa()
-//     __vite_ssr_import_0__.bbb()
-//     "
-//   `)
-// })
+aaa()
+bbb()
+`,
+    ),
+  ).toMatchInlineSnapshot(`
+    "const __esm_import_0__ = await __esm_import__(\\"vue\\");
+    function foobar() {
+      ddd();
+      const aaa = () => {
+        bbb(ccc);
+        ddd();
+      };
+      const bbb = () => {
+        console.log('hi');
+      };
+      const ccc = 1;
+      function ddd() {}
+      aaa();
+      bbb();
+      ccc();
+    }
+    __esm_import_0__.aaa();
+    __esm_import_0__.bbb();"
+  `)
+})
