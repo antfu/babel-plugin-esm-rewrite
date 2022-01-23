@@ -1,5 +1,5 @@
 import { declare } from '@babel/helper-plugin-utils'
-import type { Node, NodePath } from '@babel/traverse'
+import type { Node, NodePath } from '@babel/core'
 
 export interface Options {
   keyModuleExport?: string
@@ -211,12 +211,14 @@ export default declare((api, options = {}) => {
       },
       // dynamic import
       Import(path) {
-        path.parentPath.replaceWith(
-          t.callExpression(
-            t.identifier(keyDynamicImport),
-            (path.parent as any).arguments,
-          ),
-        )
+        if (path.parentPath) {
+          path.parentPath.replaceWith(
+            t.callExpression(
+              t.identifier(keyDynamicImport),
+              (path.parent as any).arguments,
+            ),
+          )
+        }
       },
       // import.meta
       MetaProperty(path) {
@@ -240,7 +242,7 @@ export default declare((api, options = {}) => {
 
         // import Foo from 'foo'
         // class A extends Foo {}
-        if (path.parent.type === 'ClassDeclaration' && path.parent.superClass === path.node) {
+        if (path.parentPath && path.parent.type === 'ClassDeclaration' && path.parent.superClass === path.node) {
           path.parentPath.replaceWithMultiple([
             t.variableDeclaration('const', [t.variableDeclarator(path.node, t.identifier(id))]),
             path.parent,

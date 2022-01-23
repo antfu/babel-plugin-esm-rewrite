@@ -7,6 +7,12 @@ export default defineBuildConfig({
   declaration: true,
   clean: true,
   rollup: {
+    esbuild: {},
     emitCJS: true,
   },
+  externals: [
+    '@babel/helper-plugin-utils',
+    '@babel/core',
+    '@babel/types',
+  ],
 })

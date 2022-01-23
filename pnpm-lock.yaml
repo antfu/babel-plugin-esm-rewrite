@@ -7,7 +7,6 @@ importers:
       '@antfu/eslint-config': ^0.16.0
       '@antfu/ni': ^0.12.0
       '@babel/core': ^7.16.12
-      '@babel/generator': ^7.16.8
       '@babel/helper-plugin-utils': ^7.16.7
       '@babel/types': ^7.16.8
       '@types/babel__core': ^7.1.18
@@ -20,12 +19,12 @@ importers:
       unbuild: ^0.6.8
       vite: ^2.7.13
       vitest: ^0.1.27
+    dependencies:
+      '@babel/helper-plugin-utils': 7.16.7
     devDependencies:
       '@antfu/eslint-config': 0.16.0_eslint@8.7.0+typescript@4.5.5
       '@antfu/ni': 0.12.0
       '@babel/core': 7.16.12
-      '@babel/generator': 7.16.8
-      '@babel/helper-plugin-utils': 7.16.7
       '@babel/types': 7.16.8
       '@types/babel__core': 7.1.18
       '@types/babel__helper-plugin-utils': 7.10.0
@@ -247,7 +246,7 @@ packages:
   /@babel/helper-plugin-utils/7.16.7:
     resolution: {integrity: sha512-Qg3Nk7ZxpgMrsox6HreY1ZNKdBq7K72tDSliA6dCl5f007jR4ne8iD5UzuNnCJH2xBf2BEEVGr+/OL6Gdp7RxA==}
     engines: {node: '>=6.9.0'}
-    dev: true
+    dev: false
 
   /@babel/helper-simple-access/7.16.7:
     resolution: {integrity: sha512-ZIzHVyoeLMvXMN/vok/a4LWRy8G2v205mNP0XOuf9XRLyX5/u9CnVulUtDgUTama3lT+bf/UqucuZjqiGuTS1g==}
