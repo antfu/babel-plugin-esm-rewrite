@@ -35,7 +35,7 @@
     "prepublishOnly": "nr build",
     "release": "bumpp --commit --push --tag && pnpm publish",
     "start": "esno src/index.ts",
-    "test": "vitest"
+    "test": "vitest --reporter=dot"
   },
   "devDependencies": {
     "@antfu/eslint-config": "^0.16.0",

@@ -1,7 +1,6 @@
 import { declare } from '@babel/helper-plugin-utils'
-import type { Node, NodePath } from '@babel/core'
-import t from '@babel/types'
-import babel from '@babel/core'
+import type { Node, NodePath } from '@babel/traverse'
+import type t from '@babel/types'
 
 export const ssrModuleExportsKey = '__esm_exports__'
 export const ssrImportKey = '__esm_import__'
@@ -10,97 +9,149 @@ export const ssrExportAllKey = '__esm_exportAll__'
 export const ssrImportMetaKey = '__esm_import_meta__'
 export const ssrImportItemPrefix = '__esm_import_'
 
-export default declare(() => {
-  let uid = 0
-  const deps = new Set<string>()
-  const idToImportMap = new Map<string, string>()
-  const imports: NodePath<t.ImportDeclaration>[] = []
+export default declare((api) => {
+  const t = api.types
 
-  function defineImport(node: Node, source: string) {
-    deps.add(source)
-    const importId = `${ssrImportItemPrefix}${uid++}__`
-    return importId
+  const map = new WeakMap<any, {
+    uid: number
+    id: Map<string, string>
+  }>()
+
+  function setIdMap(file: any, name: string, value: string) {
+    if (name.startsWith(ssrImportItemPrefix))
+      return
+    if (!map.has(file))
+      map.set(file, { uid: 0, id: new Map() })
+    map.get(file)!.id.set(name, value)
   }
 
-  function defineExport(name: string, local = name) {
-    return babel.parse(
+  function getIdMap(file: any, name: string) {
+    return map.get(file)?.id.get(name)
+  }
+
+  function getUid(file: any) {
+    if (!map.has(file))
+      map.set(file, { uid: 0, id: new Map() })
+    return map.get(file)!.uid++
+  }
+
+  function getImportId(file: any) {
+    return `${ssrImportItemPrefix}${getUid(file)}__`
+  }
+
+  function createExport(name: string, local = name) {
+    return api.parse(
       `Object.defineProperty(${ssrModuleExportsKey},"${name}",{ enumerable: true, configurable: true, get(){ return ${local} }});`,
     )
+  }
+  function createImport(id: string, source: string) {
+    return t.variableDeclaration(
+      'const',
+      [
+        t.variableDeclarator(
+          t.identifier(id),
+          t.awaitExpression(
+            t.callExpression(
+              t.identifier(ssrImportKey),
+              [t.stringLiteral(source)],
+            ),
+          ),
+        ),
+      ],
+    )
+  }
+
+  function _getId(name: string, path: NodePath<Node>, file: any) {
+    if (!getIdMap(file, name))
+      return name
+
+    const binding = path.scope.bindings[name]
+    if (!binding || binding.kind === 'module')
+      return getIdMap(file, name) || name
+    return name
   }
 
   return {
     name: 'babel-plugin-esm-rewrite',
     visitor: {
-      ImportDeclaration(path) {
-        imports.push(path)
+      ImportDeclaration(path, file) {
         const node = path.node
         // import foo from 'foo' --> foo -> __import_foo__.default
         // import { baz } from 'foo' --> baz -> __import_foo__.baz
         // import * as ok from 'foo' --> ok -> __import_foo__
-        const importId = defineImport(node, node.source.value as string)
+        const importId = getImportId(file)
         for (const spec of node.specifiers) {
           if (spec.type === 'ImportSpecifier' && spec.imported.type === 'Identifier') {
-            idToImportMap.set(
+            setIdMap(
+              file,
               spec.local.name,
               `${importId}.${spec.imported.name}`,
             )
           }
           else if (spec.type === 'ImportDefaultSpecifier') {
-            idToImportMap.set(spec.local.name, `${importId}.default`)
+            setIdMap(file, spec.local.name, `${importId}.default`)
           }
           else {
             // namespace specifier
-            idToImportMap.set(spec.local.name, importId)
+            setIdMap(file, spec.local.name, importId)
           }
         }
-        path.replaceWith(
-          t.variableDeclaration(
-            'const',
-            [
-              t.variableDeclarator(
-                t.identifier(importId),
-                t.awaitExpression(
-                  t.callExpression(
-                    t.identifier(ssrImportKey),
-                    [path.node.source],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        )
+        path.replaceWith(createImport(importId, node.source.value))
         path.skip()
       },
-      ExportDeclaration(path) {
+      ExportDeclaration(path, file) {
         const replaces: any[] = []
+        const node = path.node
 
-        path.traverse({
-          Identifier(path) {
-            if (path.parent.type === 'ExportSpecifier' && path.parent.exported === path.node) {
-              const localname = path.parent.local.name
-              const name = path.node.name
-              replaces.push(defineExport(name, idToImportMap.get(localname) || localname))
+        const getId = (id: string) => _getId(id, path, file)
+
+        if (node.type === 'ExportNamedDeclaration') {
+          if (node.declaration) {
+            const decl = node.declaration
+            replaces.push(decl)
+            if (decl.type === 'VariableDeclaration') {
+              for (const declarator of decl.declarations) {
+                if (declarator.id.type === 'Identifier')
+                  replaces.push(createExport(declarator.id.name))
+              }
             }
-          },
-        })
+            else if (decl.type === 'ClassDeclaration' || decl.type === 'FunctionDeclaration') {
+              if (decl.id) {
+                const name = decl.id.name
+                replaces.push(createExport(name, name))
+              }
+            }
+          }
+          else if (node.specifiers) {
+            const source = node.source
+            let importId: string | undefined
+            if (source) {
+              importId = getImportId(file)
+              replaces.push(createImport(importId, source.value))
+            }
+            for (const spec of node.specifiers) {
+              if (spec.type === 'ExportSpecifier') {
+                if (spec.exported.type === 'Identifier') {
+                  let local = spec.local.name
+                  const exported = spec.exported.name
+                  if (source)
+                    local = `${importId}.${local}`
+                  else
+                    local = getId(local)
+                  replaces.push(createExport(exported, local))
+                }
+              }
+            }
+          }
+        }
 
         path.replaceWithMultiple(replaces)
         path.skip()
       },
-      Identifier(path) {
-        const name = path.node.name
-        if (!idToImportMap.has(name))
-          return
-
-        const binding = path.scope.bindings[name]
-        if (!binding || binding.kind === 'module') {
-          path.replaceWith(
-            t.identifier(idToImportMap.get(name) || name),
-          )
-        }
-        else {
-          console.log({ name, binding })
-        }
+      Identifier(path, file) {
+        const id = _getId(path.node.name, path, file)
+        if (id !== path.node.name)
+          path.replaceWith(t.identifier(id))
       },
     },
   }
